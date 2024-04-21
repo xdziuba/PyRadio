@@ -52,7 +52,7 @@ def close_app():
     dpg.stop_dearpygui()
     player.stop()
 
-## Handles mouse draging the viewport.
+## Handles mouse dragging the viewport.
 def move_viewport(sender, app_data):
     global current_pos
     if drag_region:
