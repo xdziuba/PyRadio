@@ -15,6 +15,6 @@ After that you can run the script with: `python main.pyw`
 - 📷 Loads thumbnail related to currently playing song
 - 📡 Allows easily adding new radio streams to the player
 ### (📌) To do:
-- [x] Switch to pyminiaudio instead of mpv (it's much lighter)
+- [x] ~~Switch to pyminiaudio instead of mpv (it's much lighter)~~
 - [ ] Implement a new way of searching for a thumbnail of song (currently using [youtube-search-python](https://github.com/alexmercerind/youtube-search-python))
 - [ ] Load base list of radio stations from the internet
