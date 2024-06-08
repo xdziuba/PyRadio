@@ -1,15 +1,16 @@
 # -*- coding: utf-8 -*-
 
 ###########################
-# Python Radio Player 0.2 #
+# Python Radio Player 0.3 #
 # Written by Paweł Dziuba #
 ###########################
 
 # Needed imports
 import dearpygui.dearpygui as dpg
-from pycaw.pycaw import AudioUtilities
+import miniaudio
+from pycaw.pycaw import AudioUtilities, ISimpleAudioVolume
+from os import system, getcwd
 from threading import Thread
-from os import system, getcwd, environ, pathsep
 import time
 from win32api import GetKeyState
 import win32gui
@@ -19,29 +20,15 @@ import requests
 from io import BytesIO
 from youtubesearchpython import VideosSearch
 
-## Adds 'mpv' directory to the 'PATH' environment variable and then imports mpv lib
-environ['PATH'] += pathsep + f'{getcwd()}/mpv'
-from mpv import mpv
-
 ## Updates the stream title and loads image related (not always) to it
 ## Probably going to stop using youtubesearchpython for searching and receiving song thumbnails in favor of ytmusic api or spotify api
-def receive_metadata():
-    time.sleep(1)
+def receive_metadata(client: miniaudio.IceCastClient, title):
+    if title != dpg.get_value('rds'):
+        dpg.set_value('rds', title) # Update the displayed title
+        dpg.reset_pos('rds') # Reset the position of the displayed title
     try:
-        sessions = AudioUtilities.GetAllSessions() # Get all audio sessions
-        for session in sessions:
-            if 'mpv' in session.DisplayName: 
-                title = session.DisplayName[:-6] # If the session is related to mpv: extract stream title from the session name
-        if len(title) > 2: # Checks if the title actually contains something 
-            if title != dpg.get_value('rds'):
-                dpg.set_value('rds', title) # Update the displayed title
-                dpg.reset_pos('rds') # Reset the position of the displayed title
-    except:
-        pass # Ignore any exceptions
-
-    try:
-        videosSearch = VideosSearch(title, limit=1) # Use the stream title to run a YouTube video search in order to retreive thumbnail of currently playing song 
-        link = videosSearch.result()['result'][0]['thumbnails'][0]['url'] 
+        search = VideosSearch(title, limit=1) # Use the stream title to run a YouTube video search in order to retreive thumbnail of currently playing song
+        link = search.result()['result'][0]['thumbnails'][0]['url']
         response = requests.get(link) # Make an HTTP request to get the thumbnail
         img = Image.open(BytesIO(response.content)).convert('RGBA') # Open the imageand convert to RGBA format
         resized = img.resize((214, 120))
@@ -51,12 +38,19 @@ def receive_metadata():
         data = np.divide(flat_arr , 255)
         dpg.set_value("thumbnail_texture", data) # Update the displayed thumbnail image
     except:
-        pass # Ignore any exceptions
+        pass # Ignore any exceptions if the thumbnail wasn't loaded properly
+
+## Streams audio from an IceCast server and plays it back on an audio device (runs in separate thread)
+def icecast_thread(url):
+    source = miniaudio.IceCastClient(url, update_stream_title=receive_metadata, ssl_context=None)
+    stream = miniaudio.stream_any(source, source.audio_format)
+    device.start(stream)
 
 ## Handles closing the app
 def close_app():
+    global device
+    device.stop()
     dpg.stop_dearpygui()
-    player.stop()
 
 ## Handles mouse draging the viewport
 def move_viewport(sender, app_data):
@@ -82,11 +76,16 @@ def open_radiolist(sender, app_data):
 
 ## Volume slider callback
 def change_vol(sender, app_data):
-    player.volume = app_data
+    sessions = AudioUtilities.GetAllSessions()
+    for session in sessions:
+        if session.Process and session.Process.name() == "pythonw.exe":
+            volume = session._ctl.QueryInterface(ISimpleAudioVolume) # Get volume interface from session
+            volume.SetMasterVolume(round(app_data/100, 2), None)
 
 ## Stop button callback
 def stop_playback(sender, app_data):
-    player.stop()
+    global device
+    device.stop()
     dpg.set_value('rds', 'Waiting for metadata...')
     dpg.reset_pos('rds')
     resized = img.resize((214, 120))
@@ -107,14 +106,13 @@ def search_box(sender, app_data):
 ## List box callback - handles selecting station to be played
 def list_box(sender, app_data):
     global now_playing
-    player.stop()
+    global device
+    device.stop()
     for station in radio_stations:
         if app_data in station[1]:
-            player.play(station[0])
-            now_playing = station[0]
             dpg.set_value('rds', 'Waiting for metadata...')
-            x = Thread(target=receive_metadata)
-            x.start()
+            Thread(target=lambda: icecast_thread(station[0])).start() # Run the IceCast client in separate thread
+            now_playing = station[0]
     dpg.reset_pos('rds')
 
 ## Variables used for viewport handling
@@ -129,9 +127,8 @@ radio_stations_names = []
 filtered_stations = []
 now_playing = ''
 
-## Creating MPV player object
-player = mpv.MPV(ytdl=False)
-player.volume = 50.0
+# Create miniaudio playback device object
+device = miniaudio.PlaybackDevice()
 
 ## Scan radio stations and append them to the list
 with open('radio_stations.list', 'r') as f:
@@ -212,13 +209,6 @@ while dpg.is_dearpygui_running():
         minimized = True
     if win32gui.GetWindowPlacement(win32gui.FindWindow("PyRadio", None))[1] == 1 and minimized == True: # If viewport got unminimized
         minimized = False
-        
-    ## Metadata receive timer
-    ## Runs the receive_metadata function as a new thread every 20 seconds
-    if time.time() - thread_time > 20:
-        x = Thread(target=receive_metadata)
-        x.start()
-        thread_time = time.time()
 
     ## Slider timer
     ## Handles the stream title displaying position in DPG window
